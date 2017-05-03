@@ -33,10 +33,10 @@ static void _resp_handler(unsigned req_state, coap_pkt_t* pdu);
 static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len);
 
 /* CoAP resources
- * /cli/test needed only as a separate resource for reg-cleanup test */
+ * /cli/stats2 needed only as a separate resource for gcoap-test project */
 static const coap_resource_t _resources[] = {
     { "/cli/stats", COAP_GET, _stats_handler },
-    { "/cli/test", COAP_GET, _stats_handler },
+    { "/cli/stats2", COAP_GET, _stats_handler },
 };
 static gcoap_listener_t _listener = {
     (coap_resource_t *)&_resources[0],
