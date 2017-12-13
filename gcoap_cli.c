@@ -38,6 +38,7 @@ static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len);
 static const coap_resource_t _resources[] = {
     { "/cli/stats", COAP_GET, _stats_handler },
     { "/cli/stats2", COAP_GET, _stats_handler },
+    { "/riot/board", COAP_GET, _riot_board_handler },
 };
 static gcoap_listener_t _listener = {
     (coap_resource_t *)&_resources[0],
@@ -93,16 +94,50 @@ static void _resp_handler(unsigned req_state, coap_pkt_t* pdu,
 }
 
 /*
- * Server callback for /cli/stats. Returns the count of packets sent by the
- * CLI.
+ * Server callback for /cli/stats. Accepts either a GET or a PUT.
+ *
+ * GET: Returns the count of packets sent by the CLI.
+ * PUT: Updates the count of packets. Rejects an obviously bad request, but
+ *      allows any two byte value for example purposes. Semantically, the only
+ *      valid action is to set the value to 0.
  */
 static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len)
 {
+    /* read coap method type in packet */
+    unsigned method_flag = coap_method2flag(coap_get_code_detail(pdu));
+
+    switch(method_flag) {
+        case COAP_GET:
+            gcoap_resp_init(pdu, buf, len, COAP_CODE_CONTENT);
+
+            /* write the response buffer with the request count value */
+            size_t payload_len = fmt_u16_dec((char *)pdu->payload, req_count);
+
+            return gcoap_finish(pdu, payload_len, COAP_FORMAT_TEXT);
+
+        case COAP_PUT:
+            /* convert the payload to an integer and update the internal
+               value */
+            if (pdu->payload_len <= 5) {
+                char payload[6] = { 0 };
+                memcpy(payload, (char *)pdu->payload, pdu->payload_len);
+                req_count = (uint16_t)strtoul(payload, NULL, 10);
+                return gcoap_response(pdu, buf, len, COAP_CODE_CHANGED);
+            }
+            else {
+                return gcoap_response(pdu, buf, len, COAP_CODE_BAD_REQUEST);
+            }
+    }
+
+    return 0;
+}
+
+static ssize_t _riot_board_handler(coap_pkt_t *pdu, uint8_t *buf, size_t len)
+{
     gcoap_resp_init(pdu, buf, len, COAP_CODE_CONTENT);
-
-    size_t payload_len = fmt_u16_dec((char *)pdu->payload, req_count);
-
-    return gcoap_finish(pdu, payload_len, COAP_FORMAT_TEXT);
+    /* write the RIOT board name in the response buffer */
+    memcpy(pdu->payload, RIOT_BOARD, strlen(RIOT_BOARD));
+    return gcoap_finish(pdu, strlen(RIOT_BOARD), COAP_FORMAT_TEXT);
 }
 
 static size_t _send(uint8_t *buf, size_t len, char *addr_str, char *port_str)
@@ -112,11 +147,33 @@ static size_t _send(uint8_t *buf, size_t len, char *addr_str, char *port_str)
     sock_udp_ep_t remote;
 
     remote.family = AF_INET6;
-    remote.netif  = SOCK_ADDR_ANY_NETIF;
+
+    /* parse for interface */
+    int iface = ipv6_addr_split_iface(addr_str);
+    if (iface == -1) {
+        if (gnrc_netif_numof() == 1) {
+            /* assign the single interface found in gnrc_netif_numof() */
+            remote.netif = (uint16_t)gnrc_netif_iter(NULL)->pid;
+        }
+        else {
+            remote.netif = SOCK_ADDR_ANY_NETIF;
+        }
+    }
+    else {
+        if (gnrc_netif_get_by_pid(iface) == NULL) {
+            puts("gcoap_cli: interface not valid");
+            return 0;
+        }
+        remote.netif = iface;
+    }
 
     /* parse destination address */
     if (ipv6_addr_from_str(&addr, addr_str) == NULL) {
         puts("gcoap_cli: unable to parse destination address");
+        return 0;
+    }
+    if ((remote.netif == SOCK_ADDR_ANY_NETIF) && ipv6_addr_is_link_local(&addr)) {
+        puts("gcoap_cli: must specify interface for link local target");
         return 0;
     }
     memcpy(&remote.addr.ipv6[0], &addr.u8[0], sizeof(addr.u8));
@@ -236,7 +293,7 @@ int gcoap_cli_cmd(int argc, char **argv)
         return 0;
     }
     else {
-        printf("usage: %s <get|post|put> [-c] <addr> <port> <path> [data]\n",
+        printf("usage: %s <get|post|put> [-c] <addr>[%%iface] <port> <path> [data]\n",
                argv[0]);
         printf("Options\n");
         printf("    -c  Send confirmably (defaults to non-confirmable)\n");
