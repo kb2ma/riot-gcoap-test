@@ -18,7 +18,6 @@
  * @}
  */
 
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,14 +30,15 @@
 
 static void _resp_handler(unsigned req_state, coap_pkt_t* pdu,
                           sock_udp_ep_t *remote);
-static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len);
+static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx);
+static ssize_t _riot_board_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx);
 
 /* CoAP resources
  * /cli/stats2 needed only as a separate resource for gcoap-test project */
 static const coap_resource_t _resources[] = {
-    { "/cli/stats", COAP_GET, _stats_handler },
-    { "/cli/stats2", COAP_GET, _stats_handler },
-    { "/riot/board", COAP_GET, _riot_board_handler },
+    { "/cli/stats", COAP_GET, _stats_handler, NULL },
+    { "/cli/stats2", COAP_GET, _stats_handler, NULL },
+    { "/riot/board", COAP_GET, _riot_board_handler, NULL },
 };
 static gcoap_listener_t _listener = {
     (coap_resource_t *)&_resources[0],
@@ -101,8 +101,10 @@ static void _resp_handler(unsigned req_state, coap_pkt_t* pdu,
  *      allows any two byte value for example purposes. Semantically, the only
  *      valid action is to set the value to 0.
  */
-static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len)
+static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx)
 {
+    (void)ctx;
+
     /* read coap method type in packet */
     unsigned method_flag = coap_method2flag(coap_get_code_detail(pdu));
 
@@ -132,8 +134,10 @@ static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len)
     return 0;
 }
 
-static ssize_t _riot_board_handler(coap_pkt_t *pdu, uint8_t *buf, size_t len)
+static ssize_t _riot_board_handler(coap_pkt_t *pdu, uint8_t *buf, size_t len, void *ctx)
 {
+    (void)ctx;
+
     gcoap_resp_init(pdu, buf, len, COAP_CODE_CONTENT);
     /* write the RIOT board name in the response buffer */
     memcpy(pdu->payload, RIOT_BOARD, strlen(RIOT_BOARD));
@@ -240,22 +244,18 @@ int gcoap_cli_cmd(int argc, char **argv)
 
     /* parse options */
     int apos          = 2;               /* position of address argument */
-    gcoap_send_opts_t opts;
+    unsigned msg_type = COAP_TYPE_NON;
     if (argc > apos && strcmp(argv[apos], "-c") == 0) {
-        opts.msg_type = COAP_TYPE_CON;
+        msg_type = COAP_TYPE_CON;
         apos++;
-    } else {
-        opts.msg_type = COAP_TYPE_NON;
     }
 
     if (argc == apos + 3 || argc == apos + 4) {
-        opts.msg_code = code_pos + 1;
-        opts.req_path = argv[apos + 2];
-
-        gcoap_req_init_opts(&pdu, &buf[0], GCOAP_PDU_BUF_SIZE, &opts);
+        gcoap_req_init(&pdu, &buf[0], GCOAP_PDU_BUF_SIZE, code_pos+1, argv[apos+2]);
         if (argc == apos + 4) {
             memcpy(pdu.payload, argv[apos+3], strlen(argv[apos+3]));
         }
+        coap_hdr_set_type(pdu.hdr, msg_type);
 
         if (argc == apos + 4) {
             len = gcoap_finish(&pdu, strlen(argv[apos+3]), COAP_FORMAT_TEXT);
