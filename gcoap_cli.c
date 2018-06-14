@@ -52,6 +52,9 @@ static uint16_t req_count = 0;
 /* Message type for confirmable notifications */
 static bool obs_notif_confirm = false;
 
+/* Execute _resp_handler when response received */
+static bool resp_handler_enabled = true;
+
 /*
  * Response callback.
  */
@@ -75,8 +78,9 @@ static void _resp_handler(unsigned req_state, coap_pkt_t* pdu,
                                                 coap_get_code_class(pdu),
                                                 coap_get_code_detail(pdu));
     if (pdu->payload_len) {
-        if (pdu->content_type == COAP_FORMAT_TEXT
-                || pdu->content_type == COAP_FORMAT_LINK
+        unsigned content_type = coap_get_content_type(pdu);
+        if (content_type == COAP_FORMAT_TEXT
+                || content_type == COAP_FORMAT_LINK
                 || coap_get_code_class(pdu) == COAP_CLASS_CLIENT_FAILURE
                 || coap_get_code_class(pdu) == COAP_CLASS_SERVER_FAILURE) {
             /* Expecting diagnostic payload in failure cases */
@@ -189,7 +193,8 @@ static size_t _send(uint8_t *buf, size_t len, char *addr_str, char *port_str)
         return 0;
     }
 
-    bytes_sent = gcoap_req_send2(buf, len, &remote, _resp_handler);
+    bytes_sent = gcoap_req_send2(buf, len, &remote,
+                                 resp_handler_enabled ? _resp_handler : NULL);
     if (bytes_sent > 0) {
         req_count++;
     }
@@ -224,9 +229,15 @@ int gcoap_cli_cmd(int argc, char **argv)
                     obs_notif_confirm ? "CON" : "NON");
             return 0;
         }
+        else if (argc == 4 && strcmp(argv[2], "resp.handler") == 0) {
+            resp_handler_enabled = (strcmp(argv[3], "1") == 0);
+            printf("Response handler %s\n",
+                    resp_handler_enabled ? "enabled" : "disabled");
+            return 0;
+        }
         else {
-            printf("usage: %s config obs.msg_type <NON|CON>\n",
-                   argv[0]);
+            printf("usage: %s config obs.msg_type <NON|CON>\n", argv[0]);
+            printf("       %s config resp.handler <1|0>\n", argv[0]);
             return 1;
         }
     }
